@@ -442,7 +442,7 @@ draw_genetic_correlation_circos <- function(
   )
   
   #4️⃣ 输出 PDF
-  pdf(output_pdf, width = 12, height = 10)
+  pdf(output_pdf, width = 10, height = 8)
   
   circos.clear()
   circos.par(start.degree = 90)
@@ -505,26 +505,370 @@ draw_genetic_correlation_circos(
 )
 
 
+###8.层次聚类树 (Hierarchical Clustering Dendrogram)
+#(1)Hierarchical Clustering Dendrogram  方法 A（1 − rg + average / complete）
+draw_genetic_hclust_dendrogram <- function(
+    ldsc_file,
+    output_pdf,
+    traits,
+    k = NULL,                      # 是否切树（NULL = 不强制分簇）
+    hclust_method = "average",     # average / complete / ward.D2
+    pdf_width = 12,
+    pdf_height = 10,
+    label_cex = 0.9
+) {
+  
+  #==============================
+  # 0️⃣ 加载所需包
+  #==============================
+  suppressPackageStartupMessages({
+    library(data.table)
+    library(dplyr)
+    library(tidyr)
+    library(tibble)
+    library(factoextra)
+  })
+  
+  #==============================
+  # 1️⃣ 读取 LDSC 结果
+  #==============================
+  df <- fread(ldsc_file)
+  
+  #==============================
+  # 2️⃣ 构建 rg 矩阵
+  #==============================
+  rg_mat <- df %>%
+    as.data.frame() %>%
+    filter(trait1 %in% traits,
+           trait2 %in% traits) %>%
+    dplyr::select(trait1, trait2, rg) %>%
+    pivot_wider(
+      names_from  = trait2,
+      values_from = rg
+    ) %>%
+    column_to_rownames("trait1") %>%
+    as.matrix()
+  
+  #==============================
+  # 3️⃣ 处理缺失值（论文标准做法）
+  #==============================
+  rg_mat[lower.tri(rg_mat)] <- t(rg_mat)[lower.tri(rg_mat)]
+  diag(rg_mat) <- 1
+  rg_mat[is.na(rg_mat)] <- 0
+  
+  #==============================
+  # 4️⃣ 计算遗传距离
+  #==============================
+  genetic_dist <- as.dist(1 - rg_mat)
+  
+  #==============================
+  # 5️⃣ 层次聚类
+  #==============================
+  hc <- hclust(genetic_dist, method = hclust_method)
+  
+  #==============================
+  # 6️⃣ 绘图
+  #==============================
+  pdf(output_pdf, width = pdf_width, height = pdf_height)
+  
+  p <- fviz_dend(
+    hc,
+    k = k,
+    cex = label_cex,
+    k_colors = if (!is.null(k)) "jco" else NULL,
+    color_labels_by_k = !is.null(k),
+    rect = !is.null(k),
+    rect_border = if (!is.null(k)) "jco" else NULL,
+    rect_fill = !is.null(k),
+    lwd = 1
+  ) +
+    labs(
+      title = "Hierarchical Clustering of Kidney and Cardiovascular Traits",
+      subtitle = "Based on genetic distance (1 − rg)",
+      x = "",
+      y = "Genetic distance"
+    )
+  
+  print(p)
+  dev.off()
+  
+  #==============================
+  # 7️⃣ 返回对象（方便后续分析）
+  #==============================
+  invisible(list(
+    hclust = hc,
+    rg_matrix = rg_mat,
+    distance = genetic_dist
+  ))
+}
+#输入参数并运行
+traits <- c(
+  "CKDIorII","CKDIII","CKDIV","ESRD","CRF",
+  "NS","eGFRcr_cys","IgA",
+  "HF","AF","IS","IHD","SBP",
+  "DBP","VTE","AMI","PVD","HTN"
+)
+draw_genetic_hclust_dendrogram(
+  ldsc_file  = "/users/zhangjh/202601_GWAS/output/LDSC/LDSC_result/AA_ldsc_result.csv",
+  output_pdf = "/users/zhangjh/202601_GWAS/output/LDSC/LDSC_plot/Hierarchical_Clustering_Dendrogram(1-rg)_plot.pdf",
+  traits     = traits,
+  k          = 7               # 分簇数量
+)
 
+#(2)Hierarchical Clustering Dendrogram  方法 B（Euclidean + Ward.D2）
+draw_genetic_hclust_euclidean <- function(
+    ldsc_file,
+    output_pdf,
+    traits,
+    k = 7,                  # 分簇数（与当前代码一致）
+    pdf_width = 12,
+    pdf_height = 10,
+    label_cex = 0.9
+) {
+  
+  #==============================
+  # 0️⃣ 加载包
+  #==============================
+  suppressPackageStartupMessages({
+    library(data.table)
+    library(dplyr)
+    library(tidyr)
+    library(tibble)
+    library(factoextra)
+  })
+  
+  #==============================
+  # 1️⃣ 读取 LDSC 结果
+  #==============================
+  df <- fread(ldsc_file)
+  
+  #==============================
+  # 2️⃣ 构建 rg 矩阵
+  #==============================
+  rg_mat <- df %>%
+    filter(trait1 %in% traits,
+           trait2 %in% traits) %>%
+    dplyr::select(trait1, trait2, rg) %>%
+    pivot_wider(
+      names_from  = trait2,
+      values_from = rg
+    ) %>%
+    column_to_rownames("trait1") %>%
+    as.matrix()
+  
+  #==============================
+  # 3️⃣ 对称补齐 + 缺失处理
+  #==============================
+  rg_mat[lower.tri(rg_mat)] <- t(rg_mat)[lower.tri(rg_mat)]
+  diag(rg_mat) <- 1
+  rg_mat[is.na(rg_mat)] <- 0
+  
+  #==============================
+  # 4️⃣ 遗传距离（Euclidean on rg profiles）
+  #==============================
+  genetic_dist <- dist(1 - rg_mat, method = "euclidean")
+  
+  #==============================
+  # 5️⃣ 层次聚类（ward.D2）
+  #==============================
+  hc <- hclust(genetic_dist, method = "ward.D2")
+  
+  #==============================
+  # 6️⃣ 绘制 dendrogram
+  #==============================
+  pdf(output_pdf, width = pdf_width, height = pdf_height)
+  
+  p <- fviz_dend(
+    hc,
+    k = k,
+    cex = label_cex,
+    k_colors = "jco",
+    color_labels_by_k = TRUE,
+    rect = TRUE,
+    rect_border = "jco",
+    rect_fill = TRUE,
+    lwd = 1
+  ) +
+    labs(
+      title = "Hierarchical Clustering of Kidney and Cardiovascular Traits",
+      subtitle = "Based on genetic distance (Euclidean on rg profiles)",
+      x = "",
+      y = "Genetic distance"
+    )
+  
+  print(p)
+  dev.off()
+  
+  #==============================
+  # 7️⃣ 返回对象（方便后续分析）
+  #==============================
+  invisible(list(
+    hclust = hc,
+    rg_matrix = rg_mat,
+    distance = genetic_dist
+  ))
+}
+#输入参数并运行
+traits <- c(
+  "CKDIorII","CKDIII","CKDIV","ESRD","CRF",
+  "CYSTKD","NS","eGFRcr_cys","IgA",
+  "HF","AF","IS","IHD","SBP",
+  "DBP","VTE","AMI","PVD","HTN"
+)
+draw_genetic_hclust_euclidean(
+  ldsc_file  = "/users/zhangjh/202601_GWAS/output/LDSC/LDSC_result/AA_ldsc_result.csv",
+  output_pdf = "/users/zhangjh/202601_GWAS/output/LDSC/LDSC_plot/Hierarchical_Clustering_Dendrogram(Euclidean)_plot.pdf",
+  traits     = traits,
+  k          = 7
+)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+###9.疾病遗传网络拓扑图 (Force-directed Network Graph)
+plot_genetic_network <- function(
+    ldsc_file,           # LDSC 结果 CSV 文件路径
+    output_pdf,          # 输出 PDF 文件路径
+    traits = c(
+      "CKDIorII","CKDIII","CKDIV","ESRD","CRF",
+      "CYSTKD","NS","eGFRcr_cys","IgA",
+      "HF","AF","IS","IHD","SBP",
+      "DBP","VTE","AMI","PVD","HTN"
+    ),
+    kidney_traits = c(
+      "CKDIorII","CKDIII","CKDIV","ESRD","CRF",
+      "CYSTKD","NS","eGFRcr_cys","IgA"
+    ),
+    cardio_traits = c(
+      "HF","AF","IS","IHD","SBP",
+      "DBP","VTE","AMI","PVD","HTN"
+    )
+) {
+  # 加载必要包
+  library(data.table)
+  library(dplyr)
+  library(igraph)
+  library(ggraph)
+  library(ggplot2)
+  
+  # 1️⃣ 读取 LDSC 数据
+  df <- fread(ldsc_file)
+  
+  # 2️⃣ 构建 edge list
+  edges <- df %>%
+    filter(!( (trait1 == "CYSTKD" & trait2 == "IgA") |
+                (trait1 == "IgA" & trait2 == "CYSTKD") ),
+           trait1 %in% traits,
+           trait2 %in% traits,
+           trait1 != trait2,
+           rg_p < 0.01) %>%
+    # 按字母顺序统一 trait1/trait2，去掉重复边
+    rowwise() %>%
+    mutate(
+      t1 = min(trait1, trait2),
+      t2 = max(trait1, trait2)
+    ) %>%
+    ungroup() %>%
+    distinct(t1, t2, .keep_all = TRUE) %>%
+    transmute(
+      from = t1,
+      to   = t2,
+      rg   = rg,
+      weight = abs(rg)
+    )
+  
+  # 3️⃣ 构建 节点表（node attributes）
+  nodes <- df %>%
+    filter(trait1 %in% traits) %>%
+    group_by(trait1) %>%
+    summarise(
+      h2 = mean(h2_trait1, na.rm = TRUE)
+    ) %>%
+    rename(name = trait1) %>%
+    mutate(
+      disease_class = case_when(
+        name %in% kidney_traits ~ "Kidney",
+        name %in% cardio_traits ~ "Cardiovascular"
+      )
+    )
+  
+  # 3️⃣ 删除没有连边的节点（离群点）
+  nodes_to_keep <- unique(c(edges$from, edges$to))
+  nodes <- nodes %>% filter(name %in% nodes_to_keep)
+  
+  # 4️⃣ 构建 igraph 对象
+  g <- graph_from_data_frame(
+    d = edges,
+    vertices = nodes,
+    directed = FALSE
+  )
+  
+  # 5️⃣ 绘制 Force-directed Network（ggraph）
+  pdf("/users/zhangjh/202601_GWAS/output/LDSC/LDSC_plot/Genetic_Disease_Network.pdf", width = 10, height = 6)
+  set.seed(123)
+  print(                         # 在函数中必须用 print() 包裹 ggplot 对象才能输出到 PDF
+  ggraph(g, layout = "fr") +
+    
+    # 边：遗传相关
+    geom_edge_link(
+      aes(width = weight),
+      colour = "grey70",
+      alpha = 0.8
+    ) +
+    
+    # 节点：疾病
+    geom_node_point(
+      aes(
+        size = h2,
+        color = disease_class
+      ),
+      alpha = 0.9
+    ) +
+    
+    # 节点标签
+    geom_node_text(
+      aes(label = name),
+      repel = TRUE,
+      size = 5,
+      color = "black"
+    ) +
+    
+    # 颜色（肾脏 vs 心血管）
+    scale_color_manual(
+      values = c(
+        Kidney = "#FC757B",
+        Cardiovascular = "#3C9Bc9"
+      )
+    ) +
+    
+    # 节点大小（遗传力）
+    scale_size_continuous(
+      range = c(4, 12),
+      name = expression(h^2)
+    ) +
+    
+    # 边宽（|rg|）
+    scale_edge_width(
+      range = c(0.5, 3),
+      name = expression("|" * r[g] * "|")
+    ) +
+    
+    theme_void() +
+    theme(
+      legend.position = "right",
+      plot.title = element_text(size = 14, face = "bold")
+    ) +
+    
+    labs(
+      title = "Genetic Network of Kidney and Cardiovascular Diseases"
+    )
+  )
+  dev.off()
+  
+  message("Network plot saved to: ", output_pdf)
+}
+#输入参数并运行
+plot_genetic_network(
+  ldsc_file = "/users/zhangjh/202601_GWAS/output/LDSC/LDSC_result/AA_ldsc_result.csv",
+  output_pdf = "/users/zhangjh/202601_GWAS/output/LDSC/LDSC_plot/Genetic_Disease_Network.pdf"
+)
 
 
 
